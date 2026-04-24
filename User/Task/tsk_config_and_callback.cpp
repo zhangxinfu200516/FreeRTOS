@@ -453,7 +453,16 @@ void Task1ms_TIM5_Callback()
         }
     }
 }
-
+//
+/* 全局变量和句柄 */
+QueueHandle_t xSensorDataQueue;
+QueueHandle_t xProcessedDataQueue;
+SemaphoreHandle_t xStatusMutex;
+SystemStatus_t xSystemStatus;
+void vSensorTask(void *argument);
+void vDataProcessingTask(void *argument);
+void vDataStorageTask(void *argument);
+void vSystemMonitorTask(void *argument);
 #ifdef Semaphore
 /* 互斥信号量句柄 */
 SemaphoreHandle_t xMutex;
@@ -497,21 +506,26 @@ __attribute__((noreturn)) void StartCAN_TX_TASK(void const *argument);
 __attribute__((noreturn)) void StartUI_TASK(void const *argument);
 #endif
 void OSTaskInit()
-{ 
+{
+    xSensorDataQueue = xQueueCreate(SENSOR_QUEUE_LENGTH, sizeof(SensorData_t));
+    xProcessedDataQueue = xQueueCreate(SENSOR_QUEUE_LENGTH, sizeof(ProcessedData_t));
+    xStatusMutex = xSemaphoreCreateMutex();
+
     // 创建传感器任务
-    xTaskCreate(vSensorTask, "TempSensor", 128, (void *)SENSOR_TEMPERATURE, 2, NULL);
-    xTaskCreate(vSensorTask, "HumiditySensor", 128, (void *)SENSOR_HUMIDITY, 2, NULL);
-    xTaskCreate(vSensorTask, "PressureSensor", 128, (void *)SENSOR_PRESSURE, 2, NULL);
+    xTaskCreate(vSensorTask, "TempSensor", 128, (void *)SENSOR_TEMPERATURE, 3, NULL);
+    xTaskCreate(vSensorTask, "HumiditySensor", 128, (void *)SENSOR_HUMIDITY, 3, NULL);
+    xTaskCreate(vSensorTask, "PressureSensor", 128, (void *)SENSOR_PRESSURE, 3, NULL);
 
     // 创建处理任务
-    xTaskCreate(vDataProcessingTask, "DataProcessor", 256, NULL, 3, NULL);
+    xTaskCreate(vDataProcessingTask, "DataProcessor", 256, NULL, 2, NULL);
 
     // 创建存储任务
     xTaskCreate(vDataStorageTask, "DataStorage", 256, NULL, 1, NULL);
 
     // 创建监控任务
-    xTaskCreate(vSystemMonitorTask, "SystemMonitor", 256, NULL, 1, NULL);
+    // xTaskCreate(vSystemMonitorTask, "SystemMonitor", 256, NULL, 1, NULL);
 
+    xSystemStatus.system_status = 1;
 #ifdef Semaphore
     // 创建互斥信号量
     xMutex = xSemaphoreCreateMutex();
@@ -567,6 +581,122 @@ void OSTaskInit()
 
     start_flag = 1;
 #endif
+}
+/* 模拟传感器读取 */
+float fReadSensor(SensorType_t type, uint8_t sensor_id, uint8_t *error)
+{
+    // 模拟传感器读取，实际应用中替换为真实的传感器读取代码
+    static float base_values[] = {25.0f, 45.0f, 1013.0f};
+    float noise = (rand() % 100) / 100.0f; // 0.0-1.0的噪声
+    float value;
+
+    // 模拟偶尔的读取失败
+    if ((rand() % 100) < 5)
+    { // 5%的概率失败
+        *error = 1;
+        return 0.0f;
+    }
+
+    *error = 0;
+    value = base_values[type] + noise;
+
+    // 模拟不同类型的传感器范围
+    switch (type)
+    {
+    case SENSOR_TEMPERATURE:
+        value = 15.0f + (rand() % 300) / 10.0f;
+        break;
+    case SENSOR_HUMIDITY:
+        value = 30.0f + (rand() % 500) / 10.0f;
+        break;
+    case SENSOR_PRESSURE:
+        value = 1000.0f + (rand() % 300) / 10.0f;
+        break;
+    }
+
+    return value;
+}
+void vSensorTask(void *argument)
+{
+    SensorType_t sensor_type = (SensorType_t)(intptr_t)argument;
+    SensorData_t xSensorData;
+
+    xSensorData.type = sensor_type;
+    xSensorData.sensor_id = 1; // 假设每个类型一个传感器
+
+    for (;;)
+    {
+        // 读取传感器数据
+        xSensorData.timestamp = xTaskGetTickCount();
+        xSensorData.value = fReadSensor(sensor_type, xSensorData.sensor_id,
+                                        &xSensorData.error_code);
+
+        // 发送到数据队列
+        if (xQueueSend(xSensorDataQueue, &xSensorData, 0) == pdPASS)
+        {
+            // 更新系统状态
+            if (xSemaphoreTake(xStatusMutex, portMAX_DELAY) == pdPASS)
+            {
+                xSystemStatus.system_status = 1;
+                xSystemStatus.total_samples++;
+                xSystemStatus.last_sample_time = xSensorData.timestamp;
+                xSemaphoreGive(xStatusMutex);
+            }
+        }
+        else
+        {
+            // 队列满，更新错误计数
+            if (xSemaphoreTake(xStatusMutex, portMAX_DELAY) == pdPASS)
+            {
+                xSystemStatus.failed_samples++;
+                xSemaphoreGive(xStatusMutex);
+            }
+        }
+
+        vTaskDelay(1000);
+    }
+}
+void vDataProcessingTask(void *argument)
+{
+    SensorData_t xSensorData;
+    ProcessedData_t xProcessedData;
+
+    for (;;)
+    {
+        if (xQueueReceive(xSensorDataQueue, &xSensorData, portMAX_DELAY) == pdPASS)
+        {
+            if (xSensorData.error_code == 0)
+            {
+                xProcessedData.type = xSensorData.type;
+                xProcessedData.timestamp = xSensorData.timestamp;
+                xProcessedData.processed_value = xSensorData.value;
+                xProcessedData.sensor_id = xSensorData.sensor_id;
+                xProcessedData.quality = 100;
+                xQueueSend(xProcessedDataQueue, &xProcessedData, 0);
+            }
+        }
+        vTaskDelay(500);
+    }
+}
+void vDataStorageTask(void *argument)
+{
+    ProcessedData_t xProcessedData;
+    for (;;)
+    {
+        if (xQueueReceive(xProcessedDataQueue, &xProcessedData, portMAX_DELAY) == pdPASS)
+        {
+            if (xSemaphoreTake(xStatusMutex, portMAX_DELAY) == pdPASS)
+            {
+                xSystemStatus.system_status = 0;
+
+                xSemaphoreGive(xStatusMutex);
+            }
+        }
+        vTaskDelay(250);
+    }
+}
+void vSystemMonitorTask(void *argument)
+{
 }
 #ifdef Semaphore
 void vTask1(void *argument)
