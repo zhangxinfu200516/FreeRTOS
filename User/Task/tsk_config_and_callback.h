@@ -32,7 +32,23 @@
 #include "stm32f4xx_hal.h"
 #include "buzzer.h"
 /* Exported macros -----------------------------------------------------------*/
+#ifdef QUEUE
+/* 定义消息类型枚举 */
+typedef enum {
+    MSG_TYPE_TEMPERATURE,
+    MSG_TYPE_HUMIDITY,
+    MSG_TYPE_PRESSURE,
+    MSG_TYPE_LIGHT
+} MessageType_t;
 
+/* 定义通用消息结构 */
+typedef struct {
+    MessageType_t type;     // 消息类型
+    uint8_t sensorID;       // 传感器ID
+    uint32_t timestamp;     // 时间戳
+    float value;            // 测量值
+} SensorMessage_t;
+#endif
 /* Exported types ------------------------------------------------------------*/
 
 /* Exported variables --------------------------------------------------------*/

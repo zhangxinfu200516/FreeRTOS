@@ -454,6 +454,37 @@ void Task1ms_TIM5_Callback()
     }
 }
 
+#ifdef Semaphore
+/* 互斥信号量句柄 */
+SemaphoreHandle_t xMutex;
+void vTask1(void *argument);
+void vTask2(void *argument);
+int32_t ShareData = 0;
+#endif
+#ifdef xBinary
+/* 信号量句柄 */
+SemaphoreHandle_t xBinarySemaphore;
+void vTask1(void *argument);
+void vTask2(void *argument);
+#endif
+#ifdef QUEUE
+// 创建消息队列
+QueueHandle_t xMessageQueue;
+SensorMessage_t xReceivedMessage_A;
+SensorMessage_t xReceivedMessage_B;
+/* 任务优先级 */
+#define PRODUCER_TASK_PRIORITY (tskIDLE_PRIORITY + 2)
+#define CONSUMER_TASK_PRIORITY (tskIDLE_PRIORITY + 1)
+
+/* 任务堆栈大小 */
+#define TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 2)
+void vProducerTask(void *argument);
+void vProducer_Task_B(void *argument);
+void vConsumerTask(void *argument);
+float rtos_Dt[5];
+uint32_t rtos_Last_Cnt[5];
+#endif
+#ifdef ROBOT_CONTROL
 osThreadId insTaskHandle;
 osThreadId remote_and_aliveTaskHandle;
 osThreadId robotTaskHandle;
@@ -464,9 +495,47 @@ __attribute__((noreturn)) void StartREMOTE_AND_ALIVE_TASK(void const *argument);
 __attribute__((noreturn)) void StartROBOTTASK(void const *argument);
 __attribute__((noreturn)) void StartCAN_TX_TASK(void const *argument);
 __attribute__((noreturn)) void StartUI_TASK(void const *argument);
+#endif
 void OSTaskInit()
 {
+#ifdef Semaphore
+    // 创建互斥信号量
+    xMutex = xSemaphoreCreateMutex();
+    if(xMutex != NULL)
+    {
+        // 创建任务
+        xTaskCreate(vTask1, "Task1", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
+        xTaskCreate(vTask2, "Task2", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
+    }
+#endif
+#ifdef xBinary//二进制信号量
+    xBinarySemaphore = xSemaphoreCreateBinary();
+    if (xBinarySemaphore != NULL)
+    {
+        // 创建任务
+        xTaskCreate(vTask1, "Task1", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
+        xTaskCreate(vTask2, "Task2", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
+    }
+#endif
+#ifdef QUEUE
+    // 创建消息队列，可容纳10个SensorMessage_t类型的消息
+    xMessageQueue = xQueueCreate(10, sizeof(SensorMessage_t));
 
+    if (xMessageQueue != NULL)
+    {
+        // 创建生产者任务
+        xTaskCreate(vProducerTask, "Producer", TASK_STACK_SIZE, NULL,
+                    PRODUCER_TASK_PRIORITY, NULL);
+
+        // 创建生产者任务B
+        xTaskCreate(vProducer_Task_B, "Producer_Task_B", TASK_STACK_SIZE, NULL,
+                    PRODUCER_TASK_PRIORITY, NULL);
+        // 创建消费者任务
+        xTaskCreate(vConsumerTask, "Consumer", TASK_STACK_SIZE, NULL,
+                    CONSUMER_TASK_PRIORITY, NULL);
+    }
+#endif
+#ifdef ROBOT_CONTROL
     osThreadDef(instask, StartINSTASK, osPriorityHigh, 0, 1024); // 最高
     insTaskHandle = osThreadCreate(osThread(instask), NULL);
 
@@ -483,10 +552,163 @@ void OSTaskInit()
     uiTaskHandle = osThreadCreate(osThread(ui_task), NULL);
 
     start_flag = 1;
+#endif
 }
+#ifdef Semaphore
+void vTask1(void *argument)
+{
+    for(;;)
+    {
+        if(xSemaphoreTake(xMutex, portMAX_DELAY) == pdPASS)
+        {
+            //进入临界区
+            ShareData += 3;
+            HAL_Delay(200);
+            xSemaphoreGive(xMutex);
+        }
+        osDelay(500);
+    }
+}
+void vTask2(void *argument)
+{
+    for(;;)
+    {
+        if(xSemaphoreTake(xMutex, portMAX_DELAY) == pdPASS)
+        {
+            //进入临界区
+            ShareData += 5;
+            HAL_Delay(200);
+            xSemaphoreGive(xMutex);
+        }
+        osDelay(500);
+    }
+}
+#endif
+#ifdef xBinary
+int32_t ulCount1 = 0, ulCount2 = 0;
+void vTask1(void *argument)
+{
+
+    for (;;)
+    {
+        ulCount1 += 2;
+        osDelay(500);
+        // 释放信号量，通知Task2
+        xSemaphoreGive(xBinarySemaphore);
+    }
+}
+void vTask2(void *argument)
+{
+    for (;;)
+    {
+        // 等待信号量
+        if (xSemaphoreTake(xBinarySemaphore, portMAX_DELAY) == pdPASS)
+        {
+            // 模拟处理工作
+            ulCount2 += 2;
+            vTaskDelay(50);
+        }
+    }
+}
+#endif 
+#ifdef QUEUE
+const TickType_t xDelay = pdMS_TO_TICKS(1000); // 1秒延迟
+void vProducerTask(void *argument)
+{
+    SensorMessage_t xMessage;
+    uint32_t ulCount = 0;
+
+    // 初始化消息结构
+    xMessage.type = MSG_TYPE_TEMPERATURE;
+    xMessage.sensorID = 1;
+    for (;;)
+    {
+        // 填充消息数据
+        xMessage.timestamp = xTaskGetTickCount();
+        xMessage.value = (float)ulCount * 10.0f; // 模拟传感器数据
+        // 发送消息到队列
+        if (xQueueSend(xMessageQueue, &xMessage, portMAX_DELAY) == pdPASS)
+        {
+        }
+        else
+        {
+        }
+
+        ulCount++;
+        vTaskDelay(500); // 延迟500ms
+
+        rtos_Dt[0] = DWT_GetDeltaT(&rtos_Last_Cnt[0]);
+    }
+}
+void vProducer_Task_B(void *argument)
+{
+    SensorMessage_t xMessage;
+    uint32_t ulCount = 0;
+
+    // 初始化消息结构
+    xMessage.type = MSG_TYPE_PRESSURE;
+    xMessage.sensorID = 2;
+
+    for (;;)
+    {
+        // 填充消息数据
+        xMessage.timestamp = xTaskGetTickCount();
+        xMessage.value = (float)ulCount * 20.0f; // 模拟传感器数据
+        // 发送消息到队列
+        if (xQueueSend(xMessageQueue, &xMessage, portMAX_DELAY) == pdPASS)
+        {
+        }
+        else
+        {
+        }
+
+        ulCount++;
+        vTaskDelay(500); // 延迟500ms
+
+        rtos_Dt[1] = DWT_GetDeltaT(&rtos_Last_Cnt[1]);
+    }
+}
+
+void vConsumerTask(void *argument)
+{
+    BaseType_t xStatus;
+    SensorMessage_t Rx_xMessage;
+    for (;;)
+    {
+        xStatus = xQueueReceive(xMessageQueue, &Rx_xMessage, portMAX_DELAY);
+        switch ((uint8_t)Rx_xMessage.type)
+        {
+        case MSG_TYPE_TEMPERATURE:
+        {
+            memcpy(&xReceivedMessage_A, &Rx_xMessage, sizeof(SensorMessage_t));
+        }
+        break;
+        case MSG_TYPE_PRESSURE:
+        {
+            memcpy(&xReceivedMessage_B, &Rx_xMessage, sizeof(SensorMessage_t));
+        }
+        break;
+        default:
+            break;
+        }
+        // 从队列接收消息
+
+        if (xStatus == pdPASS)
+        {
+        }
+        else
+        {
+        }
+        vTaskDelay(200); // 延迟200ms
+
+        rtos_Dt[2] = DWT_GetDeltaT(&rtos_Last_Cnt[2]);
+    }
+}
+#endif
+
+#ifdef ROBOT_CONTROL
 float rtos_Dt[5];
 uint32_t rtos_Last_Cnt[5];
-
 __attribute__((noreturn)) void StartINSTASK(void const *argument)
 {
 
@@ -590,6 +812,8 @@ __attribute__((noreturn)) void StartUI_TASK(void const *argument)
         osDelay(20);
     }
 }
+#endif
+
 /**
  * @brief 初始化任务
  *
@@ -616,6 +840,7 @@ extern "C" void Task_Init()
     IIC_Init(&hi2c3, Ist8310_IIC3_Callback);
     // 裁判系统
     UART_Init(&huart6, Referee_UART6_Callback, 128); // 并未使用环形队列 尽量给长范围增加检索时间 减少丢包
+    // 创建消息队列
 
 #ifdef POWER_LIMIT
 // 旧版超电
@@ -672,8 +897,8 @@ extern "C" void Task_Init()
 
     // 初始化完成,开启中断
     __enable_irq();
-     //HAL_TIM_Base_Start_IT(&htim2);
-     //HAL_TIM_Base_Start_IT(&htim5);
+    // HAL_TIM_Base_Start_IT(&htim2);
+    // HAL_TIM_Base_Start_IT(&htim5);
 }
 
 /**
