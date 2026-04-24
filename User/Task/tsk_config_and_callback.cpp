@@ -454,6 +454,7 @@ void Task1ms_TIM5_Callback()
     }
 }
 //信号量与互斥量实例
+//
 /* 全局变量和句柄 */
 QueueHandle_t xSensorDataQueue;
 QueueHandle_t xProcessedDataQueue;
