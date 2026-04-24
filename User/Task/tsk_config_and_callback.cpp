@@ -497,18 +497,32 @@ __attribute__((noreturn)) void StartCAN_TX_TASK(void const *argument);
 __attribute__((noreturn)) void StartUI_TASK(void const *argument);
 #endif
 void OSTaskInit()
-{
+{ 
+    // 创建传感器任务
+    xTaskCreate(vSensorTask, "TempSensor", 128, (void *)SENSOR_TEMPERATURE, 2, NULL);
+    xTaskCreate(vSensorTask, "HumiditySensor", 128, (void *)SENSOR_HUMIDITY, 2, NULL);
+    xTaskCreate(vSensorTask, "PressureSensor", 128, (void *)SENSOR_PRESSURE, 2, NULL);
+
+    // 创建处理任务
+    xTaskCreate(vDataProcessingTask, "DataProcessor", 256, NULL, 3, NULL);
+
+    // 创建存储任务
+    xTaskCreate(vDataStorageTask, "DataStorage", 256, NULL, 1, NULL);
+
+    // 创建监控任务
+    xTaskCreate(vSystemMonitorTask, "SystemMonitor", 256, NULL, 1, NULL);
+
 #ifdef Semaphore
     // 创建互斥信号量
     xMutex = xSemaphoreCreateMutex();
-    if(xMutex != NULL)
+    if (xMutex != NULL)
     {
         // 创建任务
         xTaskCreate(vTask1, "Task1", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
         xTaskCreate(vTask2, "Task2", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
     }
 #endif
-#ifdef xBinary//二进制信号量
+#ifdef xBinary // 二进制信号量
     xBinarySemaphore = xSemaphoreCreateBinary();
     if (xBinarySemaphore != NULL)
     {
@@ -557,11 +571,11 @@ void OSTaskInit()
 #ifdef Semaphore
 void vTask1(void *argument)
 {
-    for(;;)
+    for (;;)
     {
-        if(xSemaphoreTake(xMutex, portMAX_DELAY) == pdPASS)
+        if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdPASS)
         {
-            //进入临界区
+            // 进入临界区
             ShareData += 3;
             HAL_Delay(200);
             xSemaphoreGive(xMutex);
@@ -571,11 +585,11 @@ void vTask1(void *argument)
 }
 void vTask2(void *argument)
 {
-    for(;;)
+    for (;;)
     {
-        if(xSemaphoreTake(xMutex, portMAX_DELAY) == pdPASS)
+        if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdPASS)
         {
-            //进入临界区
+            // 进入临界区
             ShareData += 5;
             HAL_Delay(200);
             xSemaphoreGive(xMutex);
@@ -610,7 +624,7 @@ void vTask2(void *argument)
         }
     }
 }
-#endif 
+#endif
 #ifdef QUEUE
 const TickType_t xDelay = pdMS_TO_TICKS(1000); // 1秒延迟
 void vProducerTask(void *argument)

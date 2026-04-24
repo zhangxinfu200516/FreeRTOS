@@ -49,6 +49,43 @@ typedef struct {
     float value;            // 测量值
 } SensorMessage_t;
 #endif
+/* 系统配置 */
+#define SENSOR_QUEUE_LENGTH    10
+#define MAX_SENSORS            3
+#define SAMPLE_INTERVAL_MS     1000
+
+/* 传感器数据类型定义 */
+typedef enum {
+    SENSOR_TEMPERATURE,
+    SENSOR_HUMIDITY,
+    SENSOR_PRESSURE
+} SensorType_t;
+
+typedef struct {
+    SensorType_t type;          // 传感器类型
+    uint32_t timestamp;         // 时间戳
+    float value;                // 测量值
+    uint8_t sensor_id;          // 传感器ID
+    uint8_t error_code;         // 错误代码
+} SensorData_t;
+
+/* 处理后的数据类型定义 */
+typedef struct {
+    SensorType_t type;          // 传感器类型
+    uint32_t timestamp;         // 时间戳
+    float processed_value;      // 处理后的值
+    uint8_t sensor_id;          // 传感器ID
+    uint8_t quality;            // 数据质量指标
+} ProcessedData_t;
+
+/* 系统状态结构 */
+typedef struct {
+    uint32_t total_samples;
+    uint32_t failed_samples;
+    uint32_t last_sample_time;
+    uint8_t system_status;
+} SystemStatus_t;
+
 /* Exported types ------------------------------------------------------------*/
 
 /* Exported variables --------------------------------------------------------*/
